@@ -36,8 +36,11 @@ import org.osgi.service.log.LogService;
 import com.vaadin.osgi.resources.OsgiVaadinResources;
 import com.vaadin.osgi.resources.OsgiVaadinResources.ResourceBundleInactiveException;
 import com.vaadin.osgi.resources.VaadinResourceService;
+import com.vaadin.osgi.servlet.ds.OsgiUIProvider;
+import com.vaadin.osgi.servlet.ds.OsgiVaadinServlet;
 import com.vaadin.server.Constants;
 import com.vaadin.server.VaadinServlet;
+import com.vaadin.ui.UI;
 
 /**
  * This component tracks {@link VaadinServlet} registrations, configures them
@@ -63,6 +66,8 @@ public class VaadinServletRegistration {
 
     private LogService logService;
 
+    private OsgiUIProvider uiProvider = new OsgiUIProvider();
+
     @Reference(cardinality = ReferenceCardinality.MULTIPLE, service = VaadinServlet.class, policy = ReferencePolicy.DYNAMIC)
     void bindVaadinServlet(VaadinServlet servlet, ServiceReference<VaadinServlet> reference)
             throws ResourceBundleInactiveException {
@@ -84,13 +89,29 @@ public class VaadinServletRegistration {
                     Boolean.toString(annotation.asyncSupported()));
         }
 
-        // We register the Http Whiteboard servlet using the context of
-        // the bundle which registered the Vaadin Servlet, not our own
-        BundleContext bundleContext = reference.getBundle().getBundleContext();
-        ServiceRegistration<Servlet> servletRegistration = bundleContext
-                .registerService(Servlet.class, servlet, properties);
+		// We register the Http Whiteboard servlet using the context of
+		// the bundle which registered the Vaadin Servlet, not our own
+		BundleContext bundleContext = reference.getBundle().getBundleContext();
+        if (servlet instanceof OsgiVaadinServlet) {
+        	((OsgiVaadinServlet)servlet).setUIProvider(uiProvider);
+        } else {
+			log(LogService.LOG_WARNING,
+					"The servlet is not an instance of OsgiVaadinServlet. If you are using Declarative Services in your UI your dependencies will not work");
+        }
 
+        ServiceRegistration<Servlet> servletRegistration = bundleContext.registerService(Servlet.class, servlet,
+				properties);
         registeredServlets.put(reference, servletRegistration);
+    }
+
+    @Reference(cardinality = ReferenceCardinality.MULTIPLE, service = UI.class, policy = ReferencePolicy.DYNAMIC)
+    void bindUI(UI ui, ServiceReference<UI> reference) {
+    	BundleContext context = reference.getBundle().getBundleContext();
+    	uiProvider.bindUI(ui, context.getServiceObjects(reference));
+    }
+
+    void unbindUI(UI ui) {
+    	uiProvider.unbindUI(ui);
     }
 
     private boolean validateSettings(WebServlet annotation,
@@ -141,10 +162,12 @@ public class VaadinServletRegistration {
     @Reference(cardinality = ReferenceCardinality.OPTIONAL)
     void setLogService(LogService logService) {
         this.logService = logService;
+        uiProvider.setLogService(logService);
     }
 
     void unsetLogService(LogService logService) {
         this.logService = null;
+        uiProvider.setLogService(null);
     }
 
     private Hashtable<String, Object> getProperties(
